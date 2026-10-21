@@ -70,6 +70,6 @@ generator cannot alter this catalogue's output without a commit here.
 
 ## The catalogue is empty
 
-No item has been submitted yet, so `index.json` carries zero entries. That is the
-honest state rather than a placeholder: the client draws its own empty catalogue
-rather than a fabricated one.
+No item has been submitted yet, so once the Action has run `index.json` carries
+zero entries. That is the honest state rather than a placeholder: the client
+draws its own empty catalogue rather than a fabricated one.

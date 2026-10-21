@@ -2,7 +2,10 @@ name: index
 on:
   push:
     branches: [main]
-    paths: ["catalogue/**"]
+    # The workflow's own path is listed so the commit that adds it runs it: a
+    # filter on `catalogue/**` alone would have left the first push silent and
+    # the index missing until someone added an item.
+    paths: ["catalogue/**", "index.json", ".github/workflows/index.yml"]
   workflow_dispatch:
 permissions:
   contents: write
