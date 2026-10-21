@@ -1,0 +1,93 @@
+name: auto-merge
+
+# The trust ladder's second rung, and a security boundary rather than a
+# convenience: a verified author's own PR merges only when all three hold —
+# the author is in `verified-authors.txt` on `main`, the diff touches one
+# `catalogue/<id>/` directory and nothing else, and the `validate` check on
+# THIS head is green.
+#
+# `pull_request_target` gives the job a write token. That is safe here only
+# because the workflow never checks out or runs the pull request's code: the
+# checkout below is `main`, and every PR path is read through the API.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths: ["catalogue/**"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          sparse-checkout: verified-authors.txt
+
+      - name: the author is verified
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          if ! grep -qxF "$AUTHOR" verified-authors.txt; then
+            echo "$AUTHOR is not in verified-authors.txt; the owner reviews this PR." >&2
+            exit 0
+          fi
+
+      - name: the diff touches one item directory and nothing else
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/pulls/$NUMBER/files" --paginate --jq '.[].filename' > files.txt
+          if [ ! -s files.txt ]; then
+            echo "The pull request changes no file." >&2
+            exit 1
+          fi
+          bad=$(grep -Ev '^catalogue/[A-Za-z0-9_-]{1,64}/[^/]+$' files.txt || true)
+          if [ -n "$bad" ]; then
+            echo "Refused: a path outside catalogue/<id>/:" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
+          dirs=$(cut -d/ -f2 files.txt | sort -u)
+          if [ "$(printf '%s\n' "$dirs" | wc -l)" -ne 1 ]; then
+            echo "Refused: the diff spans more than one catalogue directory:" >&2
+            echo "$dirs" >&2
+            exit 1
+          fi
+          echo "Single directory: $dirs"
+
+      - name: the validate check on this head is green
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            conclusion=$(gh api "repos/$REPO/commits/$SHA/check-runs" \
+              --jq '[.check_runs[] | select(.name == "validate") | .conclusion] | first // "waiting"')
+            case "$conclusion" in
+              success) echo "validate is green on $SHA"; exit 0 ;;
+              failure|cancelled|timed_out|action_required)
+                echo "validate concluded $conclusion; not merging." >&2
+                exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "validate did not conclude within ten minutes; not merging." >&2
+          exit 1
+
+      - name: squash-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr merge "$NUMBER" --repo "$REPO" --squash

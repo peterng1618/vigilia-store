@@ -1,0 +1,3 @@
+# GitHub logins whose own catalogue/<id>/ pull requests may auto-merge.
+# One login per line; a login not listed here waits for the owner.
+peterng1618

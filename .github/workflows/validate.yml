@@ -1,0 +1,56 @@
+name: validate
+
+# A pull request may only be merged when every catalogue directory it touches
+# validates with the app's own reader. The check runs the pinned app commit, not
+# the PR's code: a submission carries data, never a program.
+
+on:
+  pull_request:
+    paths: ["catalogue/**"]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: peterng1618/vigilia
+          ref: 2c315a9d08cf399bd44e4f857be1e82699783b76
+          path: app
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: app/src/web
+      - run: npm run build
+        working-directory: app/src/web
+
+      - name: every changed catalogue directory validates
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          # The directories this PR touches, each once. A path that is not under
+          # catalogue/<id>/ is not a submission and is refused here rather than
+          # silently skipped.
+          dirs=$(git diff --name-only "$base" HEAD -- catalogue | cut -d/ -f1-2 | sort -u)
+          if [ -z "$dirs" ]; then
+            echo "No catalogue directory changed." >&2
+            exit 1
+          fi
+          status=0
+          for dir in $dirs; do
+            if ! node app/src/web/packages/host/bin/vigilia.js validate-item "$dir"; then
+              status=1
+            fi
+          done
+          exit $status
