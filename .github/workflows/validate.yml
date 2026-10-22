@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: peterng1618/vigilia
-          ref: d22911c608d5b39b82d518897ff8176fd70e98ef
+          ref: 982d257908d5b39b82d518897ff8176fd70e98ef
           path: app
 
       - uses: actions/setup-node@v4
