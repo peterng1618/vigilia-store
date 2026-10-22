@@ -16,7 +16,12 @@ jobs:
   index:
     runs-on: ubuntu-latest
     steps:
+      # `ref: main`, not the caller's sha: auto-merge calls this after it
+      # merges, and a workflow_call resolves its context before the merge, so
+      # the default checkout would read the tree the new item is still missing.
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/checkout@v4
         with:
           repository: peterng1618/vigilia
