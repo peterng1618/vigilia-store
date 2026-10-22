@@ -22,6 +22,8 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
+    outputs:
+      merged: ${{ steps.merge.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,8 +88,18 @@ jobs:
           exit 1
 
       - name: squash-merge
+        id: merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           NUMBER: ${{ github.event.pull_request.number }}
         run: gh pr merge "$NUMBER" --repo "$REPO" --squash
+
+  # A merge made with `GITHUB_TOKEN` starts no workflow, so index.yml's push
+  # trigger never fires. Regenerating here is what keeps the listing current.
+  regenerate:
+    needs: auto-merge
+    if: needs.auto-merge.outputs.merged == 'true'
+    uses: ./.github/workflows/index.yml
+    permissions:
+      contents: write

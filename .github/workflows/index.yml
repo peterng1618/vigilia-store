@@ -7,6 +7,9 @@ on:
     # the index missing until someone added an item.
     paths: ["catalogue/**", "index.json", ".github/workflows/index.yml"]
   workflow_dispatch:
+  # Called by auto-merge after it merges: a push made with `GITHUB_TOKEN` starts
+  # no workflow, so the listing would otherwise go stale until a human pushed.
+  workflow_call:
 permissions:
   contents: write
 jobs:
