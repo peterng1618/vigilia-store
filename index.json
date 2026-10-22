@@ -1,4 +1,27 @@
 {
-  "generatedAt": "2026-10-22T20:55:00+07:00",
-  "entries": []
+  "generatedAt": "2026-10-22T15:19:53Z",
+  "entries": [
+    {
+      "id": "6041df49-9c61-4d51-a184-716890560bdb",
+      "kind": "dashboard-theme",
+      "name": "Vigilia smoke theme",
+      "version": "1.0.0",
+      "createdAt": "2026-10-22T15:19:09.656Z",
+      "updatedAt": "2026-10-22T15:19:09.656Z",
+      "downloads": 0,
+      "favorites": 0,
+      "packageUrl": "https://raw.githubusercontent.com/peterng1618/vigilia-store/main/catalogue/6041df49-9c61-4d51-a184-716890560bdb/6041df49-9c61-4d51-a184-716890560bdb.zip",
+      "thumbnail": "catalogue/6041df49-9c61-4d51-a184-716890560bdb/thumbnail.png",
+      "facets": {
+        "author": "Vigilia",
+        "colourMode": "dark",
+        "sensors": [],
+        "tags": [],
+        "orientation": "landscape",
+        "aspect": "16:9",
+        "width": 640,
+        "height": 360
+      }
+    }
+  ]
 }
