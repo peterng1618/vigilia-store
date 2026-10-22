@@ -3,17 +3,37 @@ name: auto-merge
 # The trust ladder's second rung, and a security boundary rather than a
 # convenience: a verified author's own PR merges only when all three hold —
 # the author is in `verified-authors.txt` on `main`, the diff touches one
-# `catalogue/<id>/` directory and nothing else, and the `validate` check on
-# THIS head is green.
+# `catalogue/<id>/` directory the author owns and nothing else, and the
+# `validate` check on THIS head is green.
+#
+# **Ownership is read from git, not from the item file.** `item.json` carries no
+# author, so the catalogue's one record of who an item belongs to is the author
+# of the latest commit on `main` that touched its directory. A directory that
+# does not exist on `main` is a first submission and belongs to whoever opened
+# the PR; a directory that does exist is allowed only for that commit's author.
+# Both ends of a rename count as changed paths, so moving another author's item
+# out of its directory is a change to a directory the PR author does not own.
+#
+# **Every step after the author check is gated on that check's output**, and the
+# check itself fails the job: an unverified author gets a red run and no merge
+# step is ever reached.
 #
 # `pull_request_target` gives the job a write token. That is safe here only
 # because the workflow never checks out or runs the pull request's code: the
 # checkout below is `main`, and every PR path is read through the API.
+#
+# A second trigger, `workflow_run` on `validate` completing: the wait below can
+# outlive its window when a cold runner queues, and no other event would retry
+# the merge. That run resolves the open pull request from validate's head
+# commit and then uses the same gated steps.
 
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
     paths: ["catalogue/**"]
+  workflow_run:
+    workflows: [validate]
+    types: [completed]
 
 permissions:
   contents: write
@@ -30,47 +50,104 @@ jobs:
           ref: main
           sparse-checkout: verified-authors.txt
 
-      - name: the author is verified
-        env:
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          set -euo pipefail
-          if ! grep -qxF "$AUTHOR" verified-authors.txt; then
-            echo "$AUTHOR is not in verified-authors.txt; the owner reviews this PR." >&2
-            exit 0
-          fi
-
-      - name: the diff touches one item directory and nothing else
+      - name: resolve the pull request
+        id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          NUMBER: ${{ github.event.pull_request.number }}
+          EVENT: ${{ github.event_name }}
+          EVENT_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_AUTHOR: ${{ github.event.pull_request.user.login }}
+          EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          gh api "repos/$REPO/pulls/$NUMBER/files" --paginate --jq '.[].filename' > files.txt
-          if [ ! -s files.txt ]; then
+          if [ "$EVENT" = "pull_request_target" ]; then
+            number="$EVENT_NUMBER"
+            author="$EVENT_AUTHOR"
+            sha="$EVENT_SHA"
+          else
+            # `workflow_run` carries no pull request payload. The head commit is
+            # what both events share, and GitHub reports the open PR for it.
+            sha="$HEAD_SHA"
+            number=$(gh api "repos/$REPO/commits/$sha/pulls" \
+              --jq '[.[] | select(.state == "open")][0].number // ""')
+            if [ -z "$number" ]; then
+              echo "No open pull request for $sha; nothing to merge."
+              exit 0
+            fi
+            author=$(gh api "repos/$REPO/pulls/$number" --jq '.user.login')
+          fi
+          {
+            echo "number=$number"
+            echo "author=$author"
+            echo "head=$sha"
+            echo "proceed=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: the author is verified
+        id: verified
+        if: steps.pr.outputs.proceed == 'true'
+        env:
+          AUTHOR: ${{ steps.pr.outputs.author }}
+        run: |
+          set -euo pipefail
+          echo "verified=false" >> "$GITHUB_OUTPUT"
+          if ! grep -qxF "$AUTHOR" verified-authors.txt; then
+            echo "$AUTHOR is not in verified-authors.txt; the owner reviews this PR." >&2
+            exit 1
+          fi
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      - name: the diff touches one directory the author owns
+        if: steps.verified.outputs.verified == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          AUTHOR: ${{ steps.pr.outputs.author }}
+        run: |
+          set -euo pipefail
+          # Both ends of a rename, because GitHub reports only the new path in
+          # `filename`: a rename out of another author's directory would
+          # otherwise look like a first submission.
+          gh api "repos/$REPO/pulls/$NUMBER/files" --paginate \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > files.tsv
+          if [ ! -s files.tsv ]; then
             echo "The pull request changes no file." >&2
             exit 1
           fi
-          bad=$(grep -Ev '^catalogue/[A-Za-z0-9_-]{1,64}/[^/]+$' files.txt || true)
+          cut -f1 files.tsv > paths.txt
+          cut -f2 files.tsv | grep -v '^$' >> paths.txt || true
+          bad=$(grep -Ev '^catalogue/[A-Za-z0-9_-]{1,64}/[^/]+$' paths.txt || true)
           if [ -n "$bad" ]; then
             echo "Refused: a path outside catalogue/<id>/:" >&2
             echo "$bad" >&2
             exit 1
           fi
-          dirs=$(cut -d/ -f2 files.txt | sort -u)
+          dirs=$(cut -d/ -f2 paths.txt | sort -u)
           if [ "$(printf '%s\n' "$dirs" | wc -l)" -ne 1 ]; then
             echo "Refused: the diff spans more than one catalogue directory:" >&2
             echo "$dirs" >&2
             exit 1
           fi
-          echo "Single directory: $dirs"
+          id=$(printf '%s\n' "$dirs")
+          echo "Single directory: catalogue/$id"
+          # The directory's latest commit on `main` is the ownership record.
+          # No commit means the directory is new here: a first submission.
+          owner=$(gh api "repos/$REPO/commits?path=catalogue/$id&per_page=1" \
+            --jq '.[0].author.login // ""')
+          if [ -n "$owner" ] && [ "$owner" != "$AUTHOR" ]; then
+            echo "Refused: catalogue/$id belongs to $owner, not $AUTHOR." >&2
+            exit 1
+          fi
 
       - name: the validate check on this head is green
+        if: steps.verified.outputs.verified == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.event.pull_request.head.sha }}
+          SHA: ${{ steps.pr.outputs.head }}
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
@@ -89,10 +166,11 @@ jobs:
 
       - name: squash-merge
         id: merge
+        if: steps.verified.outputs.verified == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          NUMBER: ${{ github.event.pull_request.number }}
+          NUMBER: ${{ steps.pr.outputs.number }}
         run: gh pr merge "$NUMBER" --repo "$REPO" --squash
 
   # A merge made with `GITHUB_TOKEN` starts no workflow, so index.yml's push
