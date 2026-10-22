@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: peterng1618/vigilia
-          ref: 0a417fffbadb49731cd062a205c65fd9f1c78a1a
+          ref: 682379fc70e93e8d6e618adff96de8e472bf20b3
           path: app
 
       - uses: actions/setup-node@v4
@@ -49,8 +49,25 @@ jobs:
           fi
           status=0
           for dir in $dirs; do
-            if ! node app/src/web/packages/host/bin/vigilia.js validate-item "$dir"; then
-              status=1
+            id="${dir#catalogue/}"
+            previous_item=$(mktemp)
+            previous_package=$(mktemp)
+            # A directory the base commit already holds is an update: the
+            # version ruling needs the base's own header and package, and the
+            # validator derives it from those bytes rather than a claim in the
+            # PR. A directory the base does not hold is a first submission.
+            if git cat-file -e "$base:catalogue/$id/item.json" 2>/dev/null; then
+              git show "$base:catalogue/$id/item.json" > "$previous_item"
+              git show "$base:catalogue/$id/$id.zip" > "$previous_package"
+              if ! node app/src/web/packages/host/bin/vigilia.js validate-item "$dir" \
+                --previous-item "$previous_item" --previous-package "$previous_package"; then
+                status=1
+              fi
+            else
+              if ! node app/src/web/packages/host/bin/vigilia.js validate-item "$dir"; then
+                status=1
+              fi
             fi
+            rm -f "$previous_item" "$previous_package"
           done
           exit $status
