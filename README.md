@@ -8,8 +8,8 @@ cost.
 
 ```
 catalogue/<id>/item.json      what the item is — authored, and the file a PR changes
-catalogue/<id>/theme.json     the theme document, exactly as the editor saves it
-catalogue/<id>/thumbnail.*    the picture a cell draws
+catalogue/<id>/<id>.zip       the theme package, exactly as the editor exports it
+catalogue/<id>/thumbnail.png  the picture a cell draws
 index.json                    generated; do not edit
 ```
 
@@ -22,6 +22,12 @@ node app/src/web/packages/host/bin/vigilia.js \
   --build-catalogue-index catalogue --out index.json \
   --generated-at "$(git log -1 --format=%cI)"
 ```
+
+**The auto-merge workflow regenerates it too, and that is not redundancy.** A push
+made with `GITHUB_TOKEN` starts no workflow, so the `push` trigger never sees the
+workflow's own merge commit: `auto-merge` calls the generator through
+`workflow_call` after a successful merge, and the job checks out `main` explicitly
+because a reusable call resolves its context before that merge exists.
 
 The generator lives in the app repo (`packages/host/src/catalogue/build-index.ts`)
 rather than here, because the facet record it writes is computed by
@@ -56,9 +62,14 @@ nothing, because the shape above is the contract the generator refuses against.
 
 ## How an item arrives
 
-A pull request that adds one `catalogue/<id>/` directory. An item is JSON, so the
-review instrument is the diff itself. The app opens the pull request on the
-author's behalf — that lands with Vigilia's phase E.
+A pull request that adds one `catalogue/<id>/` directory. An item is data, so the
+review instrument is the diff itself, and the `validate` workflow runs the app's
+own `validate-item` over every changed directory.
+
+The app opens the pull request on the author's behalf into the author's own fork.
+A verified author — a login in `verified-authors.txt` — has their PR **auto-merged**
+once `validate` is green and the diff touches exactly one `catalogue/<id>/`
+directory; anyone else waits for the owner.
 
 ## Delivery
 
@@ -70,6 +81,5 @@ generator cannot alter this catalogue's output without a commit here.
 
 ## The catalogue is empty
 
-No item has been submitted yet, so once the Action has run `index.json` carries
-zero entries. That is the honest state rather than a placeholder: the client
+No item has been submitted yet, so `index.json` carries zero entries. That is the honest state rather than a placeholder: the client
 draws its own empty catalogue rather than a fabricated one.
