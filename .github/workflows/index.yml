@@ -43,4 +43,16 @@ jobs:
           git config user.email "vigilia-index@users.noreply.github.com"
           git add index.json
           git diff --cached --quiet || git commit -m "chore(index): regenerate"
-          git push
+          # Two runs can meet: the auto-merge workflow regenerates on a merge
+          # while a human pushes a commit. A bare push then fails and the
+          # listing stays stale (run 39712491830). Rebase onto whatever landed
+          # and try again, a bounded number of times.
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin main || { git rebase --abort || true; exit 1; }
+            if git push origin main; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "the index could not be pushed after three attempts" >&2
+          exit 1
