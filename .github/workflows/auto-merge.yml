@@ -195,6 +195,17 @@ jobs:
           # bytes validate never saw. Re-read the head and refuse a moved one,
           # naming both. `--match-head-commit` closes the remaining window
           # between this read and the merge itself.
+          # Two triggers can reach this step for one PR: the
+          # `pull_request_target` event and the `workflow_run` retry. The second
+          # then meets a PR that is already merging and fails with "Merge
+          # already in progress" (run 39723545537), which turns a normal merge
+          # into a red run nobody should have to explain. A PR that is no longer
+          # open has nothing left to do here.
+          state=$(gh pr view "$NUMBER" --repo "$REPO" --json state --jq .state)
+          if [ "$state" != "OPEN" ]; then
+            echo "PR #$NUMBER is $state; nothing to merge."
+            exit 0
+          fi
           current=$(gh api "repos/$REPO/pulls/$NUMBER" --jq '.head.sha')
           if [ "$current" != "$VALIDATED_SHA" ]; then
             echo "Refused: the pull request's head is $current, but $VALIDATED_SHA was validated; the new head has not passed validate." >&2
