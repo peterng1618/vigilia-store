@@ -1,3 +1,4 @@
+# proof: this line must stop auto-merge
 name: index
 on:
   push:
