@@ -120,7 +120,10 @@ jobs:
           fi
           cut -f1 files.tsv > paths.txt
           cut -f2 files.tsv | grep -v '^$' >> paths.txt || true
-          bad=$(grep -Ev '^catalogue/[A-Za-z0-9_-]{1,64}/[^/]+$' paths.txt || true)
+          # This pattern is a copy of renderer-core's `isCatalogueId`, because a
+          # workflow cannot import the reader it validates with; keep the two in
+          # step. A catalogue id is a lowercase UUID, and nothing else.
+          bad=$(grep -Ev '^catalogue/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/]+$' paths.txt || true)
           if [ -n "$bad" ]; then
             echo "Refused: a path outside catalogue/<id>/:" >&2
             echo "$bad" >&2
