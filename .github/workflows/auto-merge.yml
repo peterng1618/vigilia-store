@@ -10,7 +10,8 @@ name: auto-merge
 # author, so the catalogue's one record of who an item belongs to is the author
 # of the latest commit on `main` that touched its directory. A directory that
 # does not exist on `main` is a first submission and belongs to whoever opened
-# the PR; a directory that does exist is allowed only for that commit's author.
+# the PR; a directory that does exist is allowed only for that commit's author,
+# and an unknown author refuses rather than reading as a first submission.
 # Both ends of a rename count as changed paths, so moving another author's item
 # out of its directory is a change to a directory the PR author does not own.
 #
@@ -133,13 +134,28 @@ jobs:
           fi
           id=$(printf '%s\n' "$dirs")
           echo "Single directory: catalogue/$id"
-          # The directory's latest commit on `main` is the ownership record.
-          # No commit means the directory is new here: a first submission.
-          owner=$(gh api "repos/$REPO/commits?path=catalogue/$id&per_page=1" \
-            --jq '.[0].author.login // ""')
-          if [ -n "$owner" ] && [ "$owner" != "$AUTHOR" ]; then
-            echo "Refused: catalogue/$id belongs to $owner, not $AUTHOR." >&2
-            exit 1
+          # **A directory that does not exist on `main` is a first submission.**
+          # Existence is tested explicitly rather than inferred from commits: a
+          # deleted directory still has commits, and a legitimate reuse of its
+          # id must not inherit the previous owner.
+          #
+          # A directory that does exist is owned by the author of the latest
+          # commit touching it on `main`. An unknown author — an email not
+          # linked to an account, or a deleted account — refuses: no owner is
+          # not the same as no owner yet. A maintainer's direct push into a
+          # contributor's directory makes the maintainer that recorded owner, so
+          # later changes to the directory are the maintainer's to review.
+          if git cat-file -e "HEAD:catalogue/$id" 2>/dev/null; then
+            owner=$(gh api "repos/$REPO/commits?path=catalogue/$id&per_page=1" \
+              --jq '.[0].author.login // ""')
+            if [ -z "$owner" ]; then
+              echo "Refused: catalogue/$id exists on main but its latest commit has no linked author, so no owner can approve this update." >&2
+              exit 1
+            fi
+            if [ "$owner" != "$AUTHOR" ]; then
+              echo "Refused: catalogue/$id belongs to $owner, not $AUTHOR." >&2
+              exit 1
+            fi
           fi
 
       - name: the validate check on this head is green
@@ -171,7 +187,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           NUMBER: ${{ steps.pr.outputs.number }}
-        run: gh pr merge "$NUMBER" --repo "$REPO" --squash
+          VALIDATED_SHA: ${{ steps.pr.outputs.head }}
+        run: |
+          set -euo pipefail
+          # The check-run above proved VALIDATED_SHA, not the PR's current
+          # head: a push that lands while this job runs would otherwise merge
+          # bytes validate never saw. Re-read the head and refuse a moved one,
+          # naming both. `--match-head-commit` closes the remaining window
+          # between this read and the merge itself.
+          current=$(gh api "repos/$REPO/pulls/$NUMBER" --jq '.head.sha')
+          if [ "$current" != "$VALIDATED_SHA" ]; then
+            echo "Refused: the pull request's head is $current, but $VALIDATED_SHA was validated; the new head has not passed validate." >&2
+            exit 1
+          fi
+          gh pr merge "$NUMBER" --repo "$REPO" --squash \
+            --match-head-commit "$VALIDATED_SHA"
 
   # A merge made with `GITHUB_TOKEN` starts no workflow, so index.yml's push
   # trigger never fires. Regenerating here is what keeps the listing current.
